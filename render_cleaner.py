@@ -244,6 +244,7 @@ class App:
         self.queue = []
         self.scan_results = []
         self._build_ui()
+        self._enable_drag_drop()
         self.tk.after(100, self._poll_queue)
 
     # ---- 配置
@@ -315,6 +316,83 @@ class App:
         d = filedialog.askdirectory(initialdir=self.path_var.get() or str(Path.home()))
         if d:
             self.path_var.set(os.path.normpath(d))
+
+    # ---- 拖拽支持（Windows 原生 WM_DROPFILES，零第三方依赖）
+    def _enable_drag_drop(self):
+        """把整个窗口注册为文件拖放目标。仅 Windows 生效，其他平台静默跳过。"""
+        if sys.platform != 'win32':
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            self._drop_refs = (ctypes, wintypes)  # 持引用防回调被 GC
+            user32 = ctypes.windll.user32
+            shell32 = ctypes.windll.shell32
+
+            shell32.DragQueryFileW.argtypes = [
+                wintypes.WPARAM, ctypes.c_uint, wintypes.LPWSTR, ctypes.c_uint]
+            shell32.DragQueryFileW.restype = ctypes.c_uint
+
+            # tkinter 的 winfo_id 是子窗口，真正的顶层 HWND 要取父级；
+            # 窗口尚未显示时可能拿不到（0），延迟重试
+            hwnd = user32.GetParent(self.tk.winfo_id())
+            if not hwnd:
+                self.tk.after(300, self._enable_drag_drop)
+                return
+
+            WNDPROC = ctypes.WINFUNCTYPE(
+                ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint,
+                wintypes.WPARAM, wintypes.LPARAM)
+            SetWindowLongPtr = getattr(user32, 'SetWindowLongPtrW', None) \
+                or user32.SetWindowLongW
+            # 显式声明 64 位安全原型：默认 c_int 会截断指针（返回值与入参都是）
+            SetWindowLongPtr.argtypes = [
+                wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+            SetWindowLongPtr.restype = ctypes.c_ssize_t
+            CallWindowProc = user32.CallWindowProcW
+            CallWindowProc.argtypes = [
+                ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint,
+                wintypes.WPARAM, wintypes.LPARAM]
+            CallWindowProc.restype = ctypes.c_ssize_t
+
+            def _wndproc(h, msg, wp, lp):
+                if msg == 0x0233:  # WM_DROPFILES
+                    try:
+                        count = shell32.DragQueryFileW(wp, 0xFFFFFFFF, None, 0)
+                        buf = ctypes.create_unicode_buffer(1024)
+                        paths = []
+                        for i in range(count):
+                            shell32.DragQueryFileW(wp, i, buf, 1024)
+                            paths.append(buf.value)
+                        self.tk.after(0, lambda p=paths: self._on_drop_paths(p))
+                    finally:
+                        shell32.DragFinish(wp)
+                    return 0
+                return CallWindowProc(self._old_wndproc, h, msg, wp, lp)
+
+            self._wndproc_ref = WNDPROC(_wndproc)  # 保持回调引用
+            proc_addr = ctypes.cast(self._wndproc_ref, ctypes.c_void_p).value
+            self._old_wndproc = SetWindowLongPtr(hwnd, -4, proc_addr)  # GWL_WNDPROC
+            user32.DragAcceptFiles(hwnd, True)
+        except Exception as exc:  # noqa: BLE001
+            self.log_text.configure(state='normal')
+            self.log_text.insert('end', f'[提示] 拖拽功能初始化失败（不影响其他功能）: {exc}\n')
+            self.log_text.configure(state='disabled')
+
+    def _on_drop_paths(self, paths):
+        """拖放入口：取第一个路径。目录直接用；文件用其所在目录。"""
+        if not paths:
+            return
+        p = os.path.normpath(paths[0])
+        if os.path.isdir(p):
+            self.path_var.set(p)
+            self._log(f'拖入目录: {p}')
+            self.start_scan()
+        elif os.path.isfile(p):
+            d = os.path.dirname(p)
+            self.path_var.set(d)
+            self._log(f'拖入文件，使用其所在目录: {d}')
+            self.start_scan()
 
     def _invert_selection(self):
         sel = set(self.tree.selection())
