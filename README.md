@@ -52,5 +52,8 @@ python render_cleaner.py --cli <根目录> [--no-backup] [--dry-run]   # 命令�
 
 ```
 pip install pyinstaller
-pyinstaller -F -w -n MMY-RenderCleaner render_cleaner.py
+pyinstaller -F -w -n MMY-RenderCleaner --icon=icon.ico render_cleaner.py
 ```
+
+已打好的一份在 `dist/MMY-RenderCleaner.exe`（28MB，免 Python 环境直接双击运行）。
+config.json 会生成在 exe 同目录，记住上次选择的目录。

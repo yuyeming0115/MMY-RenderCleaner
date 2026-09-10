@@ -24,7 +24,12 @@ from tkinter import filedialog, messagebox, ttk
 import numpy as np
 from PIL import Image
 
-CONFIG_PATH = Path(__file__).with_name('config.json')
+# 配置文件与程序本体同目录；打包成 onefile exe 后 __file__ 在临时解压目录，
+# 必须改用 exe 自身位置，否则 config.json 不持久
+if getattr(sys, 'frozen', False):
+    CONFIG_PATH = Path(sys.executable).with_name('config.json')
+else:
+    CONFIG_PATH = Path(__file__).with_name('config.json')
 SAMPLES_PER_UNIT = 5          # 扫描阶段每个单元抽样的帧数
 IMAGE_EXTS = {'.png'}         # 只处理 PNG（JPG/BMP 无 alpha 无需处理）
 
