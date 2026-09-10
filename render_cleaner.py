@@ -332,6 +332,7 @@ class App:
             shell32.DragQueryFileW.argtypes = [
                 wintypes.WPARAM, ctypes.c_uint, wintypes.LPWSTR, ctypes.c_uint]
             shell32.DragQueryFileW.restype = ctypes.c_uint
+            shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
 
             # tkinter 的 winfo_id 是子窗口，真正的顶层 HWND 要取父级；
             # 窗口尚未显示时可能拿不到（0），延迟重试
@@ -373,7 +374,7 @@ class App:
             self._wndproc_ref = WNDPROC(_wndproc)  # 保持回调引用
             proc_addr = ctypes.cast(self._wndproc_ref, ctypes.c_void_p).value
             self._old_wndproc = SetWindowLongPtr(hwnd, -4, proc_addr)  # GWL_WNDPROC
-            user32.DragAcceptFiles(hwnd, True)
+            shell32.DragAcceptFiles(hwnd, True)
         except Exception as exc:  # noqa: BLE001
             self.log_text.configure(state='normal')
             self.log_text.insert('end', f'[提示] 拖拽功能初始化失败（不影响其他功能）: {exc}\n')
