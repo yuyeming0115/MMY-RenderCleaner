@@ -320,7 +320,7 @@ class App:
     # ---- 拖拽支持（Windows 原生 WM_DROPFILES，零第三方依赖）
     def _enable_drag_drop(self):
         """把整个窗口注册为文件拖放目标。仅 Windows 生效，其他平台静默跳过。"""
-        if sys.platform != 'win32':
+        if sys.platform != 'win32' or getattr(self, '_drag_hooked', False):
             return
         try:
             import ctypes
@@ -361,33 +361,46 @@ class App:
 
             def _wndproc(h, msg, wp, lp):
                 if msg == 0x0233:  # WM_DROPFILES
-                    # 回调内绝不允许异常外泄：wndproc 异常会破坏 tkinter 主循环
-                    # （GIL 状态错误 → Fatal Python error 进程崩溃）
+                    # 回调内绝不允许：①异常外泄 ②调用任何 tkinter API——
+                    # after() 会重入 _tkinter 的 Tcl 调用（ENTER_TCL/LEAVE_TCL），
+                    # 打乱主循环 GIL 线程状态 → Fatal Python error 崩溃。
+                    # 因此这里只做纯 ctypes 查询，再用独立线程把结果 marshal 回主线程。
+                    paths = []
                     try:
                         count = shell32.DragQueryFileW(wp, 0xFFFFFFFF, None, 0)
                         buf = ctypes.create_unicode_buffer(1024)
-                        paths = []
                         for i in range(count):
                             shell32.DragQueryFileW(wp, i, buf, 1024)
                             paths.append(buf.value)
-                        self.tk.after(0, lambda p=paths: self._on_drop_paths(p))
                     except Exception:
                         pass
                     try:
                         shell32.DragFinish(wp)
                     except Exception:
                         pass
+                    if paths:
+                        threading.Thread(
+                            target=self._marshal_drop, args=(paths,),
+                            daemon=True).start()
                     return 0
                 return CallWindowProc(self._old_wndproc, h, msg, wp, lp)
 
             self._wndproc_ref = WNDPROC(_wndproc)  # 保持回调引用
             proc_addr = ctypes.cast(self._wndproc_ref, ctypes.c_void_p).value
             self._old_wndproc = SetWindowLongPtr(hwnd, -4, proc_addr)  # GWL_WNDPROC
+            self._drag_hooked = True
             shell32.DragAcceptFiles(hwnd, True)
         except Exception as exc:  # noqa: BLE001
             self.log_text.configure(state='normal')
             self.log_text.insert('end', f'[提示] 拖拽功能初始化失败（不影响其他功能）: {exc}\n')
             self.log_text.configure(state='disabled')
+
+    def _marshal_drop(self, paths):
+        """在独立线程里把拖入结果转交主线程（跨线程 after 走 _tkinter 安全排队）。"""
+        try:
+            self.tk.after(0, lambda p=paths: self._on_drop_paths(p))
+        except RuntimeError:
+            pass  # 应用退出中
 
     def _on_drop_paths(self, paths):
         """拖放入口：取第一个路径。目录直接用；文件用其所在目录。"""
