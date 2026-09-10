@@ -330,9 +330,12 @@ class App:
             shell32 = ctypes.windll.shell32
 
             shell32.DragQueryFileW.argtypes = [
-                wintypes.WPARAM, ctypes.c_uint, wintypes.LPWSTR, ctypes.c_uint]
+                ctypes.c_void_p, ctypes.c_uint, wintypes.LPWSTR, ctypes.c_uint]
             shell32.DragQueryFileW.restype = ctypes.c_uint
             shell32.DragAcceptFiles.argtypes = [wintypes.HWND, wintypes.BOOL]
+            # HDROP 是 64 位句柄，不设原型会被 ctypes 默认按 c_int 转换 → OverflowError
+            shell32.DragFinish.argtypes = [ctypes.c_void_p]
+            shell32.DragFinish.restype = None
 
             # tkinter 的 winfo_id 是子窗口，真正的顶层 HWND 要取父级；
             # 窗口尚未显示时可能拿不到（0），延迟重试
@@ -358,6 +361,8 @@ class App:
 
             def _wndproc(h, msg, wp, lp):
                 if msg == 0x0233:  # WM_DROPFILES
+                    # 回调内绝不允许异常外泄：wndproc 异常会破坏 tkinter 主循环
+                    # （GIL 状态错误 → Fatal Python error 进程崩溃）
                     try:
                         count = shell32.DragQueryFileW(wp, 0xFFFFFFFF, None, 0)
                         buf = ctypes.create_unicode_buffer(1024)
@@ -366,8 +371,12 @@ class App:
                             shell32.DragQueryFileW(wp, i, buf, 1024)
                             paths.append(buf.value)
                         self.tk.after(0, lambda p=paths: self._on_drop_paths(p))
-                    finally:
+                    except Exception:
+                        pass
+                    try:
                         shell32.DragFinish(wp)
+                    except Exception:
+                        pass
                     return 0
                 return CallWindowProc(self._old_wndproc, h, msg, wp, lp)
 
