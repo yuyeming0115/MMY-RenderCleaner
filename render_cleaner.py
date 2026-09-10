@@ -330,13 +330,13 @@ class App:
     def _poll_queue(self):
         while self.queue:
             kind, payload = self.queue.pop(0)
-            if kind == 'log':
+            try:
+                self._handle(kind, payload)
+            except Exception as exc:  # noqa: BLE001
                 self.log_text.configure(state='normal')
-                self.log_text.insert('end', payload + '\n')
+                self.log_text.insert('end', f'[UI错误] {kind}: {exc}\n')
                 self.log_text.see('end')
                 self.log_text.configure(state='disabled')
-            elif kind == 'status':
-                self.status_var.set(payload)
         self.tk.after(100, self._poll_queue)
 
     def _busy(self, busy):
@@ -430,7 +430,14 @@ class App:
         self.progress.configure(value=0)
 
     def _handle(self, kind, payload):
-        if kind == 'scan_done':
+        if kind == 'log':
+            self.log_text.configure(state='normal')
+            self.log_text.insert('end', payload + '\n')
+            self.log_text.see('end')
+            self.log_text.configure(state='disabled')
+        elif kind == 'status':
+            self.status_var.set(payload)
+        elif kind == 'scan_done':
             self.scan_results = payload
             self.tree.delete(*self.tree.get_children())
             for i, (unit, frames, size, ratio, dirty_frames) in enumerate(payload):
