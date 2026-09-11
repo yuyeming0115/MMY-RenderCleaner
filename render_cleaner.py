@@ -249,8 +249,20 @@ class App:
         self.queue = []
         self.scan_results = []
         self._build_ui()
+        self._set_window_icon()
         self._enable_drag_drop()
         self.tk.after(100, self._poll_queue)
+
+    def _set_window_icon(self):
+        """设置窗口/任务栏图标（--icon 只改 exe 文件图标，运行时图标要单独设）。"""
+        base = getattr(sys, '_MEIPASS', None) or os.path.dirname(
+            os.path.abspath(__file__))
+        icon = os.path.join(base, 'icon.ico')
+        if os.path.isfile(icon):
+            try:
+                self.tk.iconbitmap(default=icon)
+            except Exception:  # noqa: BLE001
+                pass  # 图标加载失败不影响功能
 
     # ---- 配置
     def _load_config(self):
